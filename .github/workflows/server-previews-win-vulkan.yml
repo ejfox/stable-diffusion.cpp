@@ -1,0 +1,59 @@
+name: server-previews win-vulkan
+
+# Fork-only build of the Windows Vulkan binaries for the server-previews branch.
+# Same toolchain and flags as build.yml's windows-latest-cmake (vulkan) job, but it
+# uploads the zip as a run artifact and never creates releases or pushes images.
+on:
+  workflow_dispatch:
+
+jobs:
+  windows-vulkan:
+    runs-on: windows-2022
+    env:
+      VULKAN_VERSION: 1.4.328.1
+    steps:
+      - name: Clone
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+
+      - name: Install Vulkan SDK
+        run: |
+          curl.exe -o $env:RUNNER_TEMP/VulkanSDK-Installer.exe -L "https://sdk.lunarg.com/sdk/download/${env:VULKAN_VERSION}/windows/vulkansdk-windows-X64-${env:VULKAN_VERSION}.exe"
+          & "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" --accept-licenses --default-answer --confirm-command install
+          Add-Content $env:GITHUB_ENV "VULKAN_SDK=C:\VulkanSDK\${env:VULKAN_VERSION}"
+          Add-Content $env:GITHUB_PATH "C:\VulkanSDK\${env:VULKAN_VERSION}\bin"
+
+      - name: Activate MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build
+        run: |
+          mkdir build
+          cd build
+          cmake .. -DCMAKE_CXX_FLAGS='/bigobj' -G Ninja -DCMAKE_C_COMPILER=cl.exe -DCMAKE_CXX_COMPILER=cl.exe -DCMAKE_BUILD_TYPE=Release -DSD_VULKAN=ON -DSD_BUILD_SHARED_LIBS=ON -DGGML_NATIVE=OFF -DSD_BUILD_SHARED_GGML_LIB=ON -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON
+          cmake --build .
+
+      - name: Pack
+        run: |
+          if (Test-Path ".\build\bin\Release\stable-diffusion.dll") { $p = ".\build\bin\Release\*" } else { $p = ".\build\bin\*" }
+          Copy-Item ggml/LICENSE ($p -replace '\\\*$', '\ggml.txt')
+          Copy-Item LICENSE ($p -replace '\\\*$', '\stable-diffusion.cpp.txt')
+          7z a sd-server-previews-bin-win-vulkan-x64.zip $p
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: sd-server-previews-bin-win-vulkan-x64
+          path: sd-server-previews-bin-win-vulkan-x64.zip
+          retention-days: 7
