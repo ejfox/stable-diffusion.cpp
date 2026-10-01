@@ -22,7 +22,9 @@ struct SDSvrParams {
     std::string listen_ip = "127.0.0.1";
     int listen_port       = 1234;
     std::string serve_html_path;
-    bool normal_exit = false;
+    std::string preview_path;
+    int preview_interval = 1;
+    bool normal_exit     = false;
     sd_log_level_t log_level = SD_LOG_INFO;
     bool color       = false;
 

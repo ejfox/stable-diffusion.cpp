@@ -192,10 +192,12 @@ ArgOptions SDSvrParams::get_options() {
     options.string_options = {
         {"-l", "--listen-ip", "server listen ip (default: 127.0.0.1)", 0, &listen_ip},
         {"", "--serve-html-path", "path to HTML file to serve at root (optional)", 0, &serve_html_path},
+        {"", "--preview-path", "write a step preview image to this path during generation (disabled by default). Uses TAE when --taesd is given, otherwise the VAE", 0, &preview_path},
     };
 
     options.int_options = {
         {"", "--listen-port", "server listen port (default: 1234)", &listen_port},
+        {"", "--preview-interval", "preview every Nth denoiser step when --preview-path is set (default: 1)", &preview_interval},
     };
 
     options.bool_options = {
@@ -230,6 +232,11 @@ bool SDSvrParams::validate() {
         LOG_ERROR("error: serve_html_path file does not exist: %s", serve_html_path.c_str());
         return false;
     }
+
+    if (!preview_path.empty() && preview_interval < 1) {
+        LOG_ERROR("error: preview_interval should be >= 1");
+        return false;
+    }
     return true;
 }
 
@@ -247,6 +254,8 @@ std::string SDSvrParams::to_string() const {
         << "  listen_ip: " << listen_ip << ",\n"
         << "  listen_port: \"" << listen_port << "\",\n"
         << "  serve_html_path: \"" << serve_html_path << "\",\n"
+        << "  preview_path: \"" << preview_path << "\",\n"
+        << "  preview_interval: " << preview_interval << ",\n"
         << "}";
     return oss.str();
 }

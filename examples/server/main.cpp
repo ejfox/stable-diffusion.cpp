@@ -1,4 +1,6 @@
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <mutex>
 #include <string>
@@ -9,9 +11,12 @@
 
 #include "async_jobs.h"
 #include "common/common.h"
+#include "common/media_io.h"
 #include "common/resource_owners.hpp"
 #include "routes.h"
 #include "runtime.h"
+
+namespace fs = std::filesystem;
 
 #ifdef HAVE_INDEX_HTML
 #include "frontend/dist/gen_index_html.h"
@@ -68,6 +73,43 @@ void sd_log_cb(enum sd_log_level_t level, const char* log, void* data) {
     log_print(level, log, svr_params->log_level, svr_params->color);
 }
 
+static void preview_cb(int step, int frame_count, sd_image_t* image, bool is_noisy, void* data) {
+    (void)step;
+    (void)is_noisy;
+    if (frame_count != 1 || image == nullptr) {
+        return;
+    }
+    const SDSvrParams* svr_params = (const SDSvrParams*)data;
+    const fs::path final_path     = svr_params->preview_path;
+    const EncodedImageFormat fmt  = encoded_image_format_from_path(final_path.string());
+    if (fmt == EncodedImageFormat::UNKNOWN) {
+        LOG_ERROR("unsupported preview image extension: %s", final_path.string().c_str());
+        return;
+    }
+    std::vector<uint8_t> bytes = encode_image_to_vector(fmt, image->data, image->width, image->height, image->channel);
+    if (bytes.empty()) {
+        LOG_ERROR("encode preview image failed");
+        return;
+    }
+    // Write beside the target and rename, so clients polling the file never read a partial image.
+    fs::path tmp_path = final_path;
+    tmp_path += ".tmp";
+    {
+        std::ofstream out(tmp_path, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(bytes.data()), (std::streamsize)bytes.size());
+        if (!out) {
+            LOG_ERROR("save preview image to '%s' failed", tmp_path.string().c_str());
+            return;
+        }
+    }
+    // On Windows the replace fails while a reader holds the target open; the next step retries.
+    std::error_code ec;
+    fs::rename(tmp_path, final_path, ec);
+    if (ec) {
+        LOG_WARN("move preview image to '%s' failed: %s", final_path.string().c_str(), ec.message().c_str());
+    }
+}
+
 int main(int argc, const char** argv) {
     if (argc > 1 && std::string(argv[1]) == "--version") {
         std::cout << version_string() << "\n";
@@ -86,12 +128,24 @@ int main(int argc, const char** argv) {
     LOG_VERBOSE("%s", ctx_params.to_string().c_str());
     LOG_VERBOSE("%s", default_gen_params.to_string().c_str());
 
-    sd_ctx_params_t sd_ctx_params = ctx_params.to_sd_ctx_params_t(false);
+    // With previews on, TAE (if given) is used only for previews and the full VAE decodes results.
+    const bool previews             = !svr_params.preview_path.empty();
+    const bool taesd_preview_only   = previews && !ctx_params.taesd_path.empty();
+    sd_ctx_params_t sd_ctx_params   = ctx_params.to_sd_ctx_params_t(taesd_preview_only);
     SDCtxPtr sd_ctx(new_sd_ctx(&sd_ctx_params));
 
     if (sd_ctx == nullptr) {
         LOG_ERROR("new_sd_ctx_t failed");
         return 1;
+    }
+
+    if (previews) {
+        sd_set_preview_callback(preview_cb,
+                                taesd_preview_only ? PREVIEW_TAE : PREVIEW_VAE,
+                                svr_params.preview_interval,
+                                true,
+                                false,
+                                (void*)&svr_params);
     }
 
     std::mutex sd_ctx_mutex;
