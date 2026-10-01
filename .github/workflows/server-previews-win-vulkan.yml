@@ -4,6 +4,8 @@ name: server-previews win-vulkan
 # Same toolchain and flags as build.yml's windows-latest-cmake (vulkan) job, but it
 # uploads the zip as a run artifact and never creates releases or pushes images.
 on:
+  push:
+    branches: [server-previews]
   workflow_dispatch:
 
 jobs:
